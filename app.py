@@ -6,16 +6,22 @@ from aiohttp import web
 import redis.asyncio as redis
 
 
-FACTS = [
-    "Docker Compose permite levantar varios servicios con un solo comando.",
-    "Redis se puede usar como sistema de cache en memoria.",
-    "Locust sirve para hacer pruebas de carga concurrentes.",
-    "Una cache puede reducir el tiempo de respuesta de una API.",
-    "Docker permite ejecutar aplicaciones en contenedores.",
-    "Una API puede atender muchas peticiones al mismo tiempo si usa programación asíncrona.",
+EXCUSAS = [
+    "Los apuntes se los comió mi perro",
+    "Se cayó el WiFi justo cuando iba a entregar",
+    "Mi portátil decidió actualizarse durante 3 horas",
+    "El campus virtual no cargaba",
+    "Pensé que la entrega era mañana",
+    "Me confundí de asignatura",
+    "El archivo estaba en el ordenador de mi primo",
+    "El pendrive desapareció misteriosamente",
+    "Mi gato pisó el teclado y borró el trabajo",
+    "Lo tenía hecho, pero no se guardó",
+    "Mi madre me borró todo el trabajo sin querer"
 ]
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 redis_client = redis.Redis(
@@ -26,28 +32,36 @@ redis_client = redis.Redis(
 
 
 async def health(request):
+    try:
+        await redis_client.ping()
+        estado_redis = "Redis conectado"
+    except Exception:
+        estado_redis = "Redis no disponible"
+
     return web.json_response({
-        "status": "ok",
-        "message": "API funcionando correctamente"
+        "estado": "API funcionando correctamente",
+        "redis": estado_redis
     })
 
 
-async def fact(request):
-    cache_mode = request.query.get("cache", "on")
-    cache_key = "random_fact"
+async def obtener_excusa(request):
+    alumno = request.query.get("alumno", "Alumno anónimo")
+    cache = request.query.get("cache", "on").lower()
 
     inicio = time.time()
+    clave_cache = f"excusa:{alumno}"
 
-    if cache_mode == "on":
+    if cache == "on":
         try:
-            cached_fact = await redis_client.get(cache_key)
+            excusa_cacheada = await redis_client.get(clave_cache)
 
-            if cached_fact:
+            if excusa_cacheada:
                 fin = time.time()
                 return web.json_response({
-                    "fact": cached_fact,
+                    "alumno": alumno,
+                    "excusa": excusa_cacheada,
                     "cache": "HIT",
-                    "tiempo_respuesta": round(fin - inicio, 4)
+                    "tiempo_generacion": round(fin - inicio, 4)
                 })
 
         except Exception:
@@ -55,30 +69,68 @@ async def fact(request):
 
     await asyncio.sleep(1)
 
-    selected_fact = random.choice(FACTS)
+    excusa_elegida = random.choice(EXCUSAS)
 
-    if cache_mode == "on":
+    estado_cache = "OFF"
+
+    if cache == "on":
         try:
-            await redis_client.set(cache_key, selected_fact, ex=10)
-            cache_status = "MISS"
+            await redis_client.set(clave_cache, excusa_elegida, ex=15)
+            estado_cache = "MISS"
         except Exception:
-            cache_status = "REDIS_ERROR"
-    else:
-        cache_status = "OFF"
+            estado_cache = "REDIS_ERROR"
 
     fin = time.time()
 
     return web.json_response({
-        "fact": selected_fact,
-        "cache": cache_status,
-        "tiempo_respuesta": round(fin - inicio, 4)
+        "alumno": alumno,
+        "excusa": excusa_elegida,
+        "cache": estado_cache,
+        "tiempo_generacion": round(fin - inicio, 4)
     })
+
+
+async def crear_excusa(request):
+    nueva_excusa = request.query.get("excusa")
+
+    if not nueva_excusa:
+        return web.json_response({
+            "error": "Tienes que escribir una excusa en la URL",
+            "ejemplo": "http://localhost:8080/crear?excusa=Se me olvidó entregar el trabajo"
+        }, status=400)
+
+    EXCUSAS.append(nueva_excusa)
+
+    try:
+        await redis_client.flushdb()
+    except Exception:
+        pass
+
+    return web.json_response({
+        "mensaje": "Excusa creada correctamente",
+        "excusa_creada": nueva_excusa,
+        "total_excusas": len(EXCUSAS)
+    })
+
+
+async def listar_excusas(request):
+    return web.json_response({
+        "total_excusas": len(EXCUSAS),
+        "excusas": EXCUSAS
+    })
+
+
+async def fact(request):
+    return await obtener_excusa(request)
 
 
 app = web.Application()
 
 app.add_routes([
     web.get("/health", health),
+    web.get("/excusa", obtener_excusa),
+    web.get("/crear", crear_excusa),
+    web.get("/excusas", listar_excusas),
     web.get("/fact", fact),
 ])
 
